@@ -38,3 +38,13 @@ Thumbs.db
 
 # Ignore docker-related files
 docker-compose.override.yml
+
+# Testing
+playwright-report/
+test-results/
+
+# Ignore frontend build files
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/coverage/

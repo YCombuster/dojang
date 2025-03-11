@@ -27,7 +27,18 @@ EXPOSE 8000
 # Create a script to run tests with proper environment variables
 RUN echo '#!/bin/bash\n\
 export PYTHONPATH=$PYTHONPATH:/app\n\
-pytest "$@"\n\
+if [ "$#" -eq 0 ]; then\n\
+  echo "Running all tests..."\n\
+  pytest -v\n\
+elif [ "$1" = "db" ]; then\n\
+  echo "Testing database connection and pgvector..."\n\
+  pytest -v tests/test_database.py\n\
+elif [ "$1" = "api" ]; then\n\
+  echo "Testing API endpoints..."\n\
+  pytest -v tests/test_api.py\n\
+else\n\
+  pytest "$@"\n\
+fi\n\
 ' > /usr/local/bin/run-tests && \
 chmod +x /usr/local/bin/run-tests
 

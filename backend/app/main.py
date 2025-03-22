@@ -1,7 +1,11 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 
-from .database import get_db
+from .database import get_db, engine
+from . import models
+
+# Create database tables
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Study AI API")
 

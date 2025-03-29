@@ -15,6 +15,8 @@ services:
             - NEXT_PUBLIC_API_URL=http://backend:8000
         depends_on:
             - backend
+        networks:
+            - study-ai-network
 
     backend:
         build:
@@ -28,6 +30,8 @@ services:
             - DATABASE_URL=postgresql://postgres:postgres@db:5432/studyai
         depends_on:
             - db
+        networks:
+            - study-ai-network
 
     db:
         image: ankane/pgvector:latest
@@ -35,10 +39,17 @@ services:
             - '5432:5432'
         volumes:
             - postgres_data:/var/lib/postgresql/data
+            - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
         environment:
             - POSTGRES_USER=postgres
             - POSTGRES_PASSWORD=postgres
             - POSTGRES_DB=studyai
+        networks:
+            - study-ai-network
 
 volumes:
     postgres_data:
+
+networks:
+    study-ai-network:
+        external: true

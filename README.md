@@ -52,4 +52,4 @@ The application uses PostgreSQL with pgvector extension for vector embeddings.
 -   Database: `studyai`
 -   Test Database: `test_study_ai`
 -   Username: `postgres`
--   Password: `postgres`
+-   Password: `zany12`

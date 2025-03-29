@@ -2,6 +2,15 @@
 
 A modern study application built with Next.js, FastAPI, and PostgreSQL with pgvector for vector similarity search.
 
+-   personalized learning experience through features like
+    -   curriculum-specific practice questions
+    -   flashcards
+    -   mini-lessons
+    -   AI-driven feedback.
+-   content sourced from open educational resources, e.g. openstax
+
+goal: implement a CDN that integrates with vectors so the AI features can be done easily, and then open source it
+
 ## Project Structure
 
 ```

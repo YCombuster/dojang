@@ -1,6 +1,6 @@
-# Study AI Application
+# Study AI
 
-A modern study application built with Next.js, FastAPI, and PostgreSQL with pgvector for vector similarity search.
+A web application for studying with AI assistance.
 
 -   personalized learning experience through features like
     -   curriculum-specific practice questions
@@ -13,78 +13,52 @@ goal: implement a CDN that integrates with vectors so the AI features can be don
 
 ## Project Structure
 
-```
-.
-├── frontend/          # Next.js frontend application
-├── backend/          # FastAPI backend application
-├── docker-compose.yml
-└── README.md
-```
-
-## Prerequisites
-
--   Docker
--   Docker Compose
-
-## Getting Started
-
-1. Clone the repository:
-
-```bash
-git clone <repository-url>
-cd study-ai
-```
-
-2. Create necessary environment files:
-
-For frontend (.env.local):
-
-```
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
-For backend (.env):
-
-```
-DATABASE_URL=postgresql://postgres:postgres@db:5432/studyai
-```
-
-3. Start the application:
-
-```bash
-docker compose up --build
-```
-
-This will start:
-
--   Frontend at http://localhost:3000
--   Backend API at http://localhost:8000
--   PostgreSQL database at localhost:5432
+1. Clone the repository
+2. Start the Docker containers:
+    ```
+    docker compose up -d
+    ```
 
 ## Development
 
--   The application uses hot-reloading for both frontend and backend
--   Any changes to the code will automatically reflect in the running application
--   Database data is persisted in a Docker volume
+### Backend
 
-## Services
+The backend is a FastAPI application with PostgreSQL and pgvector for vector storage.
 
-### Frontend (Next.js)
+#### Running Tests
 
--   Modern React application with TypeScript
--   Tailwind CSS for styling
--   Server and Client Components
--   Optimized for performance
+Tests are run inside the Docker container to ensure consistent environment:
 
-### Backend (FastAPI)
+**Windows (PowerShell):**
 
--   Modern Python web framework
--   AsyncIO support
--   Automatic API documentation (Swagger UI at /docs)
--   Type hints and validation
+```powershell
+cd backend
+.\run_tests.ps1
+```
 
-### Database (PostgreSQL)
+**Unix (Bash):**
 
--   Persistent storage using Docker volumes
--   pgvector extension for vector similarity search
--   Secure default configuration
+```bash
+cd backend
+./run_tests.sh
+```
+
+To run specific tests:
+
+```
+cd backend
+.\run_tests.ps1 tests/test_api.py::test_health_check
+```
+
+### Frontend
+
+The frontend is a Next.js application.
+
+## Database
+
+The application uses PostgreSQL with pgvector extension for vector embeddings.
+
+-   Database: `studyai`
+-   Test Database: `test_study_ai`
+-   Username: `postgres`
+-   Password: `postgres`

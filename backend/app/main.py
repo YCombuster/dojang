@@ -17,6 +17,9 @@ def health_check():
 @app.post("/upload")
 def upload_document(db: Session = Depends(get_db)):
     """Upload a document for processing."""
+
+    # implement adding of content into here
+    # so that means pdf to 
     return {"status": "success", "message": "Document uploaded"}
 
 @app.post("/chat")

@@ -29,7 +29,8 @@ services:
         environment:
             - DATABASE_URL=postgresql+asyncpg://postgres:zany12@db:5432/studyai
         depends_on:
-            - db
+            db:
+                condition: service_healthy
         networks:
             - study-ai-network
 
@@ -39,11 +40,16 @@ services:
             - '5433:5432'
         volumes:
             - postgres_data:/var/lib/postgresql/data
-            - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+            - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
         environment:
             - POSTGRES_USER=postgres
             - POSTGRES_PASSWORD=zany12
             - POSTGRES_DB=studyai
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U postgres']
+            interval: 5s
+            timeout: 5s
+            retries: 5
         networks:
             - study-ai-network
 

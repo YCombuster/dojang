@@ -23,11 +23,11 @@ services:
             context: ./backend
             dockerfile: Dockerfile
         ports:
-            - '8000:8000'
+            - '8080:8000'
         volumes:
             - ./backend:/app
         environment:
-            - DATABASE_URL=postgresql://postgres:postgres@db:5432/studyai
+            - DATABASE_URL=postgresql+asyncpg://postgres:zany12@db:5432/studyai
         depends_on:
             - db
         networks:

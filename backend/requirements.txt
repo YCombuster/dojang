@@ -7,6 +7,7 @@ PyPDF2==3.0.1
 python-dotenv==0.21.1
 python-decouple==3.7
 alembic==1.9.2
+pgvector==0.2.4
 
 # Testing dependencies
 pytest==7.2.1

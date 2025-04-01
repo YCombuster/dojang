@@ -1,3 +1,8 @@
+from typing import Dict, List, Optional
+from fastapi import UploadFile
+import re
+from pathlib import Path
+import tempfile
 import fitz  # PyMuPDF
 from marker import extract_from_file
 import openai
@@ -7,110 +12,138 @@ import aiofiles
 import uuid
 import os
 
-# class DocumentChunk:
-#     def __init__(
-#         self,
-#         content: str,
-#         page_number: int,
-#         chunk_number: int,
-#         metadata: Optional[Dict] = None
-#     ):
-#         self.content = content
-#         self.page_number = page_number
-#         self.chunk_number = chunk_number
-#         self.metadata = metadata or {}
 
-# class DocumentProcessor:
-#     def __init__(self):
-#         # Configure chunking parameters
-#         self.min_chunk_size = 200  # minimum characters per chunk
-#         self.max_chunk_size = 1000  # maximum characters per chunk
-#         self.overlap = 50  # number of characters to overlap between chunks
+class DocumentChunk:
+    def __init__(
+        self,
+        content: str,
+        page_number: int,
+        chunk_number: int,
+        metadata: Optional[Dict] = None
+    ):
+        self.content = content
+        self.page_number = page_number
+        self.chunk_number = chunk_number
+        self.metadata = metadata or {}
 
-# MAIN FUNCTION
+class DocumentProcessor:
+    def __init__(self):
+        # Configure chunking parameters
+        self.min_chunk_size = 200  # minimum characters per chunk
+        self.max_chunk_size = 1000  # maximum characters per chunk
+        self.overlap = 50  # number of characters to overlap between chunks
 
-# def process_pdf(self, file_path: str) -> List[DocumentChunk]:
-#     """
-#     Process a PDF file and return a list of document chunks.
-#     """
-
-#     chunks = []
-#     return
-
-# def _extract_pdf_metadata(self, pdf_reader: PyPDF2.PdfReader) -> Dict:
-#     """Extract metadata from PDF document."""
-
-#     return 
+# CONSTANTS
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 
 async def save_upload_file(upload_file: UploadFile) -> str:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filename = f"{uuid.uuid4()}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    """
+    Save an uploaded file asynchronously with improved error handling and cleanup.
+    Args:
+        upload_file: FastAPI UploadFile object
+    Returns:
+        str: Path to the saved file
+    """
+    try:
+        # Create uploads directory if it doesn't exist
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        
+        # Generate unique filename with original extension
+        ext = Path(upload_file.filename).suffix or '.pdf'
+        filename = f"{uuid.uuid4()}{ext}"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        
+        # Save file in chunks
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            while chunk := await upload_file.read(CHUNK_SIZE):
+                await out_file.write(chunk)
+                
+        return file_path
+        
+    except Exception as e:
+        # Clean up partial file if save fails
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        raise RuntimeError(f"Failed to save upload file: {str(e)}")
 
-    async with aiofiles.open(file_path, 'wb') as out_file:
-        while content := await upload_file.read(1024):  # Read in chunks
-            await out_file.write(content)
-
-    return file_path
-
-def _split_pdf_into_chunks(
+async def _split_pdf_into_chunks(
     self, 
     upload_file: UploadFile, 
     source_id: int,
     metadata: Dict
 ) -> List[DocumentChunk]:
     """
-    Split text into chunks while trying to preserve semantic meaning.
+    Split PDF into semantic chunks, extract text, and return document chunks.
+    Args:
+        upload_file: FastAPI UploadFile containing the PDF
+        source_id: Unique identifier for this document source
+        metadata: Additional metadata about the document
+    Returns:
+        List of DocumentChunk objects containing the processed content
     """
+    # Save upload to temp file and get path
+    path = await save_upload_file(upload_file)
+    chunks = []
 
-    # Take path from input stream.. must wait for it to stream
-    # path = await save_upload_file(upload_file)
+    try:
+        # Open PDF handler
+        doc = fitz.open(path)
+        
+        # Process PDF in chunks of pages
+        chunk_size = 5
 
-    # Create pdf cutter handler
-    doc = fitz.open(path)
+        for chunk_start in range(0, len(doc), chunk_size):
+            # Get page range for this chunk
+            chunk_end = min(chunk_start + chunk_size, len(doc))
+            
+            # Extract text from pages in this chunk
+            chunk_text = ""
+            for page_num in range(chunk_start, chunk_end):
+                page = doc[page_num]
+                chunk_text += page.get_text()
+            
+            # Clean and normalize the extracted text
+            chunk_text = self._clean_text(chunk_text)
+            
+            # Create chunk object with metadata
+            chunk = DocumentChunk(
+                content=chunk_text,
+                page_number=chunk_start,
+                chunk_number=len(chunks),
+                metadata={
+                    "source_id": source_id,
+                    "page_range": f"{chunk_start}-{chunk_end-1}",
+                    **metadata
+                }
+            )
+            chunks.append(chunk)
+            
+    finally:
+        # Clean up temp file
+        os.remove(path)
+        
+    return chunks
 
-    # Loop through in chunk-sized intervals
-
-    # Create subdoc
-    
-    # Output to file paths
-    
-    return 
-
-
-# def _clean_text(self, text: str) -> str:
-#     """Clean extracted text by removing artifacts and normalizing whitespace."""
-#     # Remove multiple spaces
-#     text = re.sub(r'\s+', ' ', text)
-    
-#     # Remove header/footer artifacts (common in PDFs)
-#     text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)  # Page numbers
-    
-#     # Normalize newlines
-#     text = text.replace('\r', '\n')
-#     text = re.sub(r'\n{3,}', '\n\n', text)
-    
-#     return text.strip()
-
-# This one runs, to choose the corresponding type function i.e., PDF
-async def process_file(self, file_path: str, file_type: str) -> List[DocumentChunk]:
+async def process_file(
+    self, 
+    upload_file: UploadFile,
+    source_id: int,
+    metadata: Dict = None
+) -> List[DocumentChunk]:
     """
-    Process a file based on its type and return chunks.
+    Process an uploaded file and return chunks.
     Currently supports PDF, can be extended for other formats.
+    Args:
+        upload_file: FastAPI UploadFile object
+        source_id: Unique identifier for the document
+        metadata: Optional metadata about the document
+    Returns:
+        List[DocumentChunk]: Processed document chunks
     """
-    if file_type.lower() == 'pdf':
-        return self.process_pdf(file_path)
+    content_type = upload_file.content_type or ''
+    
+    if 'pdf' in content_type.lower():
+        return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
     else:
-        raise ValueError(f"Unsupported file type: {file_type}")
-
-# @staticmethod
-# async def save_upload_file(file) -> str:
-#     """
-#     Save an uploaded file to a temporary location and return the path.
-#     """
-#     # Create a temporary file with the original filename
-#     suffix = Path(file.filename).suffix
-#     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-#         content = await file.read()
-#         tmp.write(content)
-#         return tmp.name 
+        raise ValueError(f"Unsupported file type: {content_type}")

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, List
 from datetime import date
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KnowledgeBaseSource, KnowledgeBaseContent
 
@@ -60,10 +60,10 @@ class InformationSource:
         return source, contents
 
 class SourceIntakeService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
     
-    def process_source(self, source: InformationSource) -> KnowledgeBaseSource:
+    async def process_source(self, source: InformationSource) -> KnowledgeBaseSource:
         """
         Process an information source and save it to the database.
         Returns the created KnowledgeBaseSource instance.
@@ -73,12 +73,12 @@ class SourceIntakeService:
         
         # Save source
         self.db.add(source_model)
-        self.db.flush()  # Get the source_id
+        await self.db.flush()  # Get the source_id
         
         # Link and save contents
         for content in content_models:
             content.source_id = source_model.source_id
             self.db.add(content)
         
-        self.db.commit()
+        await self.db.commit()
         return source_model 

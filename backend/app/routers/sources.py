@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from datetime import date
 from pydantic import BaseModel
@@ -30,9 +30,9 @@ class SourceCreate(BaseModel):
         from_attributes = True
 
 @router.post("/", status_code=201)
-def create_source(
+async def create_source(
     source_data: SourceCreate,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new information source with its content.
@@ -45,7 +45,7 @@ def create_source(
         
         # Process the source
         service = SourceIntakeService(db)
-        result = service.process_source(source)
+        result = await service.process_source(source)
         
         return {"message": "Source created successfully", "source_id": result.source_id}
     except Exception as e:

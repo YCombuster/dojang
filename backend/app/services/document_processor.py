@@ -12,6 +12,10 @@ import aiofiles
 import uuid
 import os
 
+# for the sectioning of the chunks
+from bs4 import BeautifulSoup
+from datetime import datetime
+from sqlalchemy.orm import Session
 
 class DocumentChunk:
     def __init__(
@@ -36,6 +40,79 @@ class DocumentProcessor:
 # CONSTANTS
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
+
+# -------------------
+
+# for the sectioning of the chunking
+
+def html_to_text(html):
+    return BeautifulSoup(html, "html.parser").get_text()
+
+def sub_chunk(json_data, db: Session, source_metadata: dict):
+    """
+    This function takes our marker JSON, takes the sections, 
+    and formulates metadata and extracts content. It saves it into the database with insert_content
+    Args: JSON data from marker, database session, a dictionary which we plug into the knowledge_base_source
+    Returns: success if we get through all of the subchunks
+    """
+    # 1. Insert knowledge_base_sources row
+    source = models.KnowledgeBaseSource(
+        name=source_metadata.get("title", "Untitled"),
+        author=source_metadata.get("author", "Unknown"),
+        language=source_metadata.get("language", "en"),
+        license=source_metadata.get("license", "unknown"),
+        source_type="textbook",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+
+    section_stack = []  # stack of (section_id, level)
+
+    def insert_content(block, parent_id=None):
+        content_text = html_to_text(block.get("html", ""))
+        block_type = block.get("block_type", "Unknown")
+        embedding = generate_embedding(content_text)  # your embedding function
+
+        content = models.KnowledgeBaseContent(
+            source_id=source.source_id,
+            parent_content_id=parent_id,
+            title=None if block_type == "Text" else content_text[:100],
+            content=content_text,
+            content_type=block_type,
+            embedding=embedding,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(content)
+        db.commit()
+        db.refresh(content)
+        return content.content_id
+    
+    def traverse_blocks(blocks, parent_id=None):
+        for block in blocks:
+            block_type = block.get("block_type")
+            if block_type == "Page":
+                traverse_blocks(block.get("children", []), parent_id=parent_id)
+            elif block_type == "SectionHeader":
+                section_id = insert_content(block, parent_id=parent_id)
+                # update the stack for this new section level
+                section_stack.append((section_id, block.get("section_hierarchy", {})))
+                traverse_blocks(block.get("children", []), parent_id=section_id)
+            elif block_type in {"Text", "ListItem"}:
+                insert_content(block, parent_id=section_stack[-1][0] if section_stack else parent_id)
+            elif block_type == "ListGroup":
+                traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id)
+
+    # 2. Begin traversal
+    traverse_blocks(json_data.get("children", []))
+    return {"status": "success", "source_id": source.source_id}
+
+# -------------------
+
+# for the chunking
 
 async def save_upload_file(upload_file: UploadFile) -> str:
     """
@@ -75,6 +152,8 @@ async def _split_pdf_into_chunks(
 ) -> List[DocumentChunk]:
     """
     Split PDF into semantic chunks, extract text, and return document chunks.
+    This gets us our chunk #1 (from the entire pdf, we chunk into chunks of size X)
+    Note that this is different from taking a chunk and splitting into sections
     Args:
         upload_file: FastAPI UploadFile containing the PDF
         source_id: Unique identifier for this document source
@@ -144,6 +223,7 @@ async def process_file(
     content_type = upload_file.content_type or ''
     
     if 'pdf' in content_type.lower():
+        # now we need to take this, and then run marker on it
         return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
     else:
         raise ValueError(f"Unsupported file type: {content_type}")

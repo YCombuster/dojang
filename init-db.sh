@@ -3,6 +3,7 @@ set -e
 
 # Run the PostgreSQL initialization steps
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-"EOSQL"
+    -- First, create the vector extension
     CREATE EXTENSION IF NOT EXISTS vector;
 
     -- Knowledge Base Sources Table

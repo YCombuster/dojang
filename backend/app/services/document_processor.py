@@ -55,7 +55,8 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
     Args: JSON data from marker, database session, a dictionary which we plug into the knowledge_base_source
     Returns: success if we get through all of the subchunks
     """
-    # 1. Insert knowledge_base_sources row
+    # 1. Insert knowledge_base_sources row (created empty one) AKA the metadata
+    # remember that this is from @models.py courtesy of SQLAlchemy
     source = models.KnowledgeBaseSource(
         name=source_metadata.get("title", "Untitled"),
         author=source_metadata.get("author", "Unknown"),
@@ -65,24 +66,49 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
+    # ADD to database (stages it)
     db.add(source)
+
+    # commit the transaction
     db.commit()
+
+    # reread the new row
     db.refresh(source)
 
     section_stack = []  # stack of (section_id, level)
 
+    """
+    What is a "block" in marker?
+    they are the "smallest structural units in the PDF"
+    e.g., a section header, a paragraph of text, a list, an image, a page footer
+    """
+
     def insert_content(block, parent_id=None):
+        """
+        Inserts the HTML that we got from the marker JSON
+        into the corresponding database table
+
+        title:         
+
+        Args:
+        Returns:
+        """
         content_text = html_to_text(block.get("html", ""))
         block_type = block.get("block_type", "Unknown")
         embedding = generate_embedding(content_text)  # your embedding function
 
+        # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
+        # we don't want to embed the text itself as a title
+        
+        # also, source is from sub_chunk, our parent function
+        # so we're updating the knowledge_base_content row with SQLAlchemy ORM
         content = models.KnowledgeBaseContent(
-            source_id=source.source_id,
-            parent_content_id=parent_id,
-            title=None if block_type == "Text" else content_text[:100],
-            content=content_text,
-            content_type=block_type,
-            embedding=embedding,
+            source_id=source.source_id, # we keep the key consistent
+            parent_content_id=parent_id, # parent is from params
+            title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
+            content=content_text, # content is as extracted
+            content_type=block_type, # keep track of type
+            embedding=embedding, # TODO: add embedding
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -94,6 +120,13 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
     def traverse_blocks(blocks, parent_id=None):
         for block in blocks:
             block_type = block.get("block_type")
+            
+            # if page, then recurse through it as pages are containers not content
+            # if section header (like "Chapter 1: Limits"), then insert the block with parent id being the page
+            # if text OR ListItem, then we insert the block with parent id being the latest nest (if exists)
+            # if ListGroup, then recurse through the bullet points/numbered list containers with parent id being latest nest (if exists)
+
+            # note: section stack keeps track of nested section headers. [-1][0] gets the top of the stack.
             if block_type == "Page":
                 traverse_blocks(block.get("children", []), parent_id=parent_id)
             elif block_type == "SectionHeader":
@@ -102,6 +135,7 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
                 section_stack.append((section_id, block.get("section_hierarchy", {})))
                 traverse_blocks(block.get("children", []), parent_id=section_id)
             elif block_type in {"Text", "ListItem"}:
+                # its parent is the latest nested item if we even have one. else it's just the page.
                 insert_content(block, parent_id=section_stack[-1][0] if section_stack else parent_id)
             elif block_type == "ListGroup":
                 traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id)
@@ -227,45 +261,3 @@ async def process_file(
         return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
     else:
         raise ValueError(f"Unsupported file type: {content_type}")
-
-    def process_marker_output(self, marker_json: list) -> List[DocumentChunk]:
-        """Process marker JSON output and convert it into a list of DocumentChunk objects."""
-        chunks = []
-        chunk_counter = 0
-
-        def process_block(block, current_page=None):
-            nonlocal chunk_counter
-            block_id = block.get("id", "")
-            # Determine page number from block id if possible
-            if block_id.startswith("/page/"):
-                try:
-                    parts = block_id.split("/")
-                    page_num = int(parts[2])
-                except (IndexError, ValueError):
-                    page_num = current_page
-            else:
-                page_num = current_page
-
-         if block.get("block_type") in ["Text", "SectionHeader"]:
-             text = html_to_text(block.get("html", ""))
-             if text.strip():
-                 chunk = DocumentChunk(
-                     content=text,
-                     page_number=page_num or 0,
-                     chunk_number=chunk_counter,
-                     metadata={
-                         "block_id": block_id,
-                         "block_type": block.get("block_type"),
-                         "section_hierarchy": block.get("section_hierarchy")
-                     }
-                 )
-                 chunks.append(chunk)
-                 chunk_counter += 1
-
-         if block.get("children"):
-             for child in block.get("children"):
-                 process_block(child, current_page=page_num)
-
-     for block in marker_json:
-         process_block(block)
-     return chunks

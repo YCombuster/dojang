@@ -227,3 +227,45 @@ async def process_file(
         return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
     else:
         raise ValueError(f"Unsupported file type: {content_type}")
+
+ def process_marker_output(self, marker_json: list) -> List[DocumentChunk]:
+     """Process marker JSON output and convert it into a list of DocumentChunk objects."""
+     chunks = []
+     chunk_counter = 0
+
+     def process_block(block, current_page=None):
+         nonlocal chunk_counter
+         block_id = block.get("id", "")
+         # Determine page number from block id if possible
+         if block_id.startswith("/page/"):
+             try:
+                 parts = block_id.split("/")
+                 page_num = int(parts[2])
+             except (IndexError, ValueError):
+                 page_num = current_page
+         else:
+             page_num = current_page
+
+         if block.get("block_type") in ["Text", "SectionHeader"]:
+             text = html_to_text(block.get("html", ""))
+             if text.strip():
+                 chunk = DocumentChunk(
+                     content=text,
+                     page_number=page_num or 0,
+                     chunk_number=chunk_counter,
+                     metadata={
+                         "block_id": block_id,
+                         "block_type": block.get("block_type"),
+                         "section_hierarchy": block.get("section_hierarchy")
+                     }
+                 )
+                 chunks.append(chunk)
+                 chunk_counter += 1
+
+         if block.get("children"):
+             for child in block.get("children"):
+                 process_block(child, current_page=page_num)
+
+     for block in marker_json:
+         process_block(block)
+     return chunks

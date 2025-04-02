@@ -228,10 +228,10 @@ async def process_file(
     else:
         raise ValueError(f"Unsupported file type: {content_type}")
 
- def process_marker_output(self, marker_json: list) -> List[DocumentChunk]:
-     """Process marker JSON output and convert it into a list of DocumentChunk objects."""
-     chunks = []
-     chunk_counter = 0
+    def process_marker_output(self, marker_json: list) -> List[DocumentChunk]:
+        """Process marker JSON output and convert it into a list of DocumentChunk objects."""
+        chunks = []
+        chunk_counter = 0
 
      def process_block(block, current_page=None):
          nonlocal chunk_counter

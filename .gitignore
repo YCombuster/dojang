@@ -1,50 +1,53 @@
-# Ignore virtual environment directories
+# Python
 venv/
 .env/
 .venv/
-
-# Ignore Python cache files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Ignore environment variable files
+# Environment & Config
 .env
 *.env
 *.ini
 *.toml
 
-# Ignore package management files
+# Package Management
 Pipfile
 Pipfile.lock
 poetry.lock
 
-# Ignore IDE and editor-specific files
+# IDEs and Editors
 .vscode/
 .idea/
 *.iml
-
-# Ignore compiled files and logs
-*.log
-*.sqlite3
-db.sqlite3
-
-# Ignore Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Ignore macOS and system files
-.DS_Store
-Thumbs.db
-
-# Ignore docker-related files
-docker-compose.override.yml
-
-# Testing
-playwright-report/
-test-results/
-
-# Ignore frontend build files
+# Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/coverage/
+
+# Testing
+playwright-report/
+test-results/
+videos/
+screenshots/
+*.trace
+
+# Docker
+docker-compose.override.yml
+
+# Logs and Databases
+*.log
+*.sqlite3
+db.sqlite3
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.next/
+frontend/.next/
+.aider*

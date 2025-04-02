@@ -7,9 +7,17 @@ RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libyaml-dev \
+    && rm -rf /var/lib/apt/lists/
 
-# Copy requirements file
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip setuptools wheel
+
+# Install PyYAML with Cython first to avoid build issues
+RUN pip install Cython
+RUN pip install PyYAML==6.0.1
+
+# Copy requirements file first
 COPY requirements.txt .
 
 # Install Python dependencies
@@ -19,7 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Install the app as a module for proper imports in tests
-RUN pip install -e .
+RUN pip install --no-cache-dir -e . --no-deps
 
 # Expose the port the app runs on
 EXPOSE 8000

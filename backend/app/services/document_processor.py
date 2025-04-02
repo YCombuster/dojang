@@ -233,18 +233,18 @@ async def process_file(
         chunks = []
         chunk_counter = 0
 
-     def process_block(block, current_page=None):
-         nonlocal chunk_counter
-         block_id = block.get("id", "")
-         # Determine page number from block id if possible
-         if block_id.startswith("/page/"):
-             try:
-                 parts = block_id.split("/")
-                 page_num = int(parts[2])
-             except (IndexError, ValueError):
-                 page_num = current_page
-         else:
-             page_num = current_page
+        def process_block(block, current_page=None):
+            nonlocal chunk_counter
+            block_id = block.get("id", "")
+            # Determine page number from block id if possible
+            if block_id.startswith("/page/"):
+                try:
+                    parts = block_id.split("/")
+                    page_num = int(parts[2])
+                except (IndexError, ValueError):
+                    page_num = current_page
+            else:
+                page_num = current_page
 
          if block.get("block_type") in ["Text", "SectionHeader"]:
              text = html_to_text(block.get("html", ""))

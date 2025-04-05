@@ -3,7 +3,7 @@ from fastapi import UploadFile
 import re
 from pathlib import Path
 import tempfile
-import fitz  # PyMuPDF
+import fitz # pymupdf
 from marker import extract_from_file
 import openai
 import asyncio

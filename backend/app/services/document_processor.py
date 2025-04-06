@@ -4,13 +4,17 @@ import re
 from pathlib import Path
 import tempfile
 import fitz # pymupdf
-from marker import extract_from_file
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.schema import BlockTypes
+from marker.schema import SourceMetadata
 import openai
 import asyncio
 import asyncpg
 import aiofiles
 import uuid
 import os
+import json
 
 # for the sectioning of the chunks
 from bs4 import BeautifulSoup
@@ -47,6 +51,40 @@ CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 
 def html_to_text(html):
     return BeautifulSoup(html, "html.parser").get_text()
+
+def pdf_to_json(path, output_path):    
+    # config = {
+    # "output_format": "json",
+    # }
+    # config_parser = ConfigParser(config)
+
+    converter = PdfConverter(
+        # config=config_parser.generate_config_dict(),
+        artifact_dict=create_model_dict(),
+        # processor_list=config_parser.get_processors(),
+        # renderer=config_parser.get_renderer(),
+        # llm_service=config_parser.get_llm_service()
+    )
+
+    document = converter.build_document(
+        path,
+        output_format="json"
+    )
+
+    metadata = SourceMetadata(
+        source=path  # Just use the file path or any identifier
+    )
+
+    data = {
+        document: document,
+        metadata: metadata
+    }
+
+    # for debugging purposes
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(document.dict(), f, ensure_ascii=False, indent=2)
+
+    return data
 
 def sub_chunk(json_data, db: Session, source_metadata: dict):
     """

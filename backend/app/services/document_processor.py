@@ -7,7 +7,7 @@ import fitz # pymupdf
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.schema import BlockTypes
-from marker.schema import SourceMetadata
+# from marker.schema import SourceMetadata
 import openai
 import asyncio
 import asyncpg
@@ -71,13 +71,16 @@ def pdf_to_json(path, output_path):
         output_format="json"
     )
 
-    metadata = SourceMetadata(
-        source=path  # Just use the file path or any identifier
-    )
+    # metadata = SourceMetadata(
+    #     source=path  # Just use the file path or any identifier
+    # )
+
+    temp_dict = dict()
+    temp_dict.add("placeholder")
 
     data = {
         document: document,
-        metadata: metadata
+        metadata: temp_dict
     }
 
     # for debugging purposes
@@ -133,7 +136,7 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
         """
         content_text = html_to_text(block.get("html", ""))
         block_type = block.get("block_type", "Unknown")
-        embedding = generate_embedding(content_text)  # your embedding function
+        # embedding = generate_embedding(content_text)  # your embedding function
 
         # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
         # we don't want to embed the text itself as a title
@@ -146,7 +149,7 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
             title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
             content=content_text, # content is as extracted
             content_type=block_type, # keep track of type
-            embedding=embedding, # TODO: add embedding
+            # embedding=embedding, # TODO: add embedding
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -276,6 +279,7 @@ async def _split_pdf_into_chunks(
         
     return chunks
 
+# TODO: rename to be more descriptive   
 async def process_file(
     self, 
     upload_file: UploadFile,

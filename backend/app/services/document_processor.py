@@ -74,12 +74,25 @@ UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 
 # -------------------
+# helpers
 
 def flush_buffer(context):
     if context.content_buffer:
         context.db.bulk_save_objects(context.content_buffer)
         context.db.commit()
         context.content_buffer.clear()
+
+def generate_embedding(text: str) -> List[float]:
+    """
+    Generate an OpenAI embedding for the given text.
+    """
+    response = openai.Embedding.create(
+        input=text,
+        model="text-embedding-ada-002" 
+    )
+    return response["data"][0]["embedding"]
+
+# -------------------
 
 # for the sectioning of the chunking
 
@@ -199,7 +212,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
     # it should be extracting from json
     content_text = html_to_text(block.get("html", ""))
     block_type = block.get("block_type", "Unknown")
-    # embedding = generate_embedding(content_text)  # your embedding function
+    embedding = generate_embedding(content_text)
 
     # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
     # we don't want to embed the text itself as a title
@@ -214,7 +227,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
         title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
         content=content_text, # content is as extracted
         content_type=block_type, # keep track of type
-        # embedding=embedding, # TODO: add embedding
+        embedding=embedding,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )

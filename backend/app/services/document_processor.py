@@ -27,6 +27,7 @@ import aiofiles
 import uuid
 import os
 import json
+from app import models  # Import models from app package
 
 # for the sectioning of the chunks
 from bs4 import BeautifulSoup
@@ -58,6 +59,13 @@ class DocumentProcessor:
         self.min_chunk_size = 200  # minimum characters per chunk
         self.max_chunk_size = 1000  # maximum characters per chunk
         self.overlap = 50  # number of characters to overlap between chunks
+
+class DocumentProcessingContext:
+    def __init__(self, db: Session, source: "models.KnowledgeBaseSource"):
+        self.db = db
+        self.source = source
+        self.section_stack = []
+        self.metadata = {}  # optional extras
 
 # CONSTANTS
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
@@ -120,7 +128,7 @@ def pdf_to_json(path, output_path):
 
     return data
 
-def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str, Any]):
+def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str, Any]) -> dict[str, Any]:
     """
     This function takes our marker JSON, takes the sections, 
     and formulates metadata and extracts content. It saves it into the database with insert_content
@@ -152,14 +160,17 @@ def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str,
     # reread the new row
     db.refresh(source)
 
+    # initialize the context
+    context = DocumentProcessingContext(db=db, source=source)
+
     section_stack = []  # initialize stack of (section_id, level)
 
     # Pass db and stack
-    traverse_blocks(json_data.get("children", []), parent_id=None, db=db, section_stack=section_stack)
+    traverse_blocks(json_data.get("children", []), parent_id=None, context=context)
 
-    return {"status": "success", "source_id": source.source_id}
+    return {"status": "success", "source_id": context.source.source_id}
 
-def insert_content(block, db=None, parent_id=None):
+def insert_content(block, parent_id=None, context: DocumentProcessingContext = None):
     """
     Inserts the HTML that we got from the marker JSON
     into the corresponding database table
@@ -170,7 +181,7 @@ def insert_content(block, db=None, parent_id=None):
     Returns:
     """
 
-    if not source:
+    if not context or not context.source:
         raise ValueError("Source object is required")
 
     # GET THE TEXT
@@ -188,7 +199,7 @@ def insert_content(block, db=None, parent_id=None):
 
     # error: models is not defined
     content = models.KnowledgeBaseContent(
-        source_id=source.source_id, # we keep the key consistent
+        source_id=context.source.source_id, # we keep the key consistent
         parent_content_id=parent_id, # parent is from params
         title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
         content=content_text, # content is as extracted
@@ -197,13 +208,13 @@ def insert_content(block, db=None, parent_id=None):
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
-    db.add(content)
-    db.commit()
-    db.refresh(content)
+    context.db.add(content)
+    context.db.commit()
+    context.db.refresh(content)
     return content.content_id
 
-def traverse_blocks(json_data: dict[str, Any], blocks, parent_id=None, db=None, section_stack=None):
-    section_stack = section_stack or []
+def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingContext = None):
+    section_stack = context.section_stack
 
     for block in blocks:
         block_type = block.get("block_type")
@@ -215,23 +226,22 @@ def traverse_blocks(json_data: dict[str, Any], blocks, parent_id=None, db=None, 
 
         # note: section stack keeps track of nested section headers. [-1][0] gets the top of the stack.
         if block_type == "Page":
-            traverse_blocks(json_data, block.get("children", []), parent_id=parent_id, db=db, section_stack=section_stack)
+            traverse_blocks(block.get("children", []), parent_id=parent_id, context=context)
         elif block_type == "SectionHeader":
             section_id = insert_content(block, db=db, parent_id=parent_id)
             # update the stack for this new section level
             section_stack.append((section_id, block.get("section_hierarchy", {})))
-            traverse_blocks(json_data, block.get("children", []), parent_id=section_id, db=db, section_stack=section_stack)
+            traverse_blocks(block.get("children", []), parent_id=section_id, context=context)
         elif block_type in {"Text", "ListItem"}:
             # its parent is the latest nested item if we even have one. else it's just the page.
             insert_content(block, db=db, parent_id=section_stack[-1][0] if section_stack else parent_id)
         elif block_type == "ListGroup":
-            traverse_blocks(json_data, block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id, db=db, section_stack=section_stack)
+            traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0], context=context)
 
     # 2. Begin traversal
 
     # error: json_data and source is not defined
-    traverse_blocks(json_data, json_data.get("children", []))
-    return {"status": "success", "source_id": source.source_id}
+    return {"status": "success", "source_id": context.source.source_id}
 
 # -------------------
 

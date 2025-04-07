@@ -153,22 +153,21 @@ def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str,
     )
     # ADD to database (stages it)
     db.add(source)
-
-    # commit the transaction
     db.commit()
-
-    # reread the new row
     db.refresh(source)
 
     # initialize the context
     context = DocumentProcessingContext(db=db, source=source)
 
-    section_stack = []  # initialize stack of (section_id, level)
+    try:
+        # Pass db and stack
+        traverse_blocks(json_data.get("children", []), parent_id=None, context=context)
+        context.db.commit()
+    except Exception as e:
+        context.db.rollback()
+        raise e
 
-    # Pass db and stack
-    traverse_blocks(json_data.get("children", []), parent_id=None, context=context)
-
-    return {"status": "success", "source_id": context.source.source_id}
+    return {"status": "success", "source_id": source.source_id}
 
 def insert_content(block, parent_id=None, context: DocumentProcessingContext = None):
     """
@@ -209,9 +208,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
         updated_at=datetime.utcnow()
     )
     context.db.add(content)
-    context.db.commit()
-    context.db.refresh(content)
-    return content.content_id
+    return content
 
 def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingContext = None):
     section_stack = context.section_stack

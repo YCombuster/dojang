@@ -35,7 +35,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 # TODO:
-# - [ ] (Optional) Bundle common params (db, source_id, section_stack) into a context object for cleaner recursion.
+# - [x] (Optional) Bundle common params (db, source_id, section_stack) into a context object for cleaner recursion.
 # - [ ] (Optional) Improve error handling around database commits (rollback on failure).
 # - [ ] (Optional) Remove dead/commented out code (old config_parser stuff in `pdf_to_json`).
 # - [ ] (Optional) Add type hints to all functions for better readability and IDE support.
@@ -240,7 +240,6 @@ def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingCon
 
     # 2. Begin traversal
 
-    # error: json_data and source is not defined
     return {"status": "success", "source_id": context.source.source_id}
 
 # -------------------

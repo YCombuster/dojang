@@ -1,3 +1,15 @@
+"""
+This is a very important file. It uploads our PDFs to the database, no matter how large the PDF is
+
+- User uploads PDF
+- process_file → split into text chunks (for preview maybe) →
+- pdf_to_json → semantic JSON from Marker
+- sub_chunk → create source metadata row in KnowledgeBaseSource
+- traverse_blocks → recurse over semantic blocks and call insert_content depending on the type
+- insert_content → save each paragraph/section/list/etc into KnowledgeBaseContent.
+
+"""
+
 from typing import Dict, List, Optional
 from fastapi import UploadFile
 import re
@@ -20,6 +32,12 @@ import json
 from bs4 import BeautifulSoup
 from datetime import datetime
 from sqlalchemy.orm import Session
+
+# TODO:
+# - [ ] (Optional) Bundle common params (db, source_id, section_stack) into a context object for cleaner recursion.
+# - [ ] (Optional) Improve error handling around database commits (rollback on failure).
+# - [ ] (Optional) Remove dead/commented out code (old config_parser stuff in `pdf_to_json`).
+# - [ ] (Optional) Add type hints to all functions for better readability and IDE support.
 
 class DocumentChunk:
     def __init__(
@@ -52,18 +70,29 @@ CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 def html_to_text(html):
     return BeautifulSoup(html, "html.parser").get_text()
 
+"""
+What is a "block" in marker?
+they are the "smallest structural units in the PDF"
+e.g., a section header, a paragraph of text, a list, an image, a page footer
+"""
 def pdf_to_json(path, output_path):    
-    # config = {
-    # "output_format": "json",
-    # }
-    # config_parser = ConfigParser(config)
+    """
+    config reference
+    config = settings (what output you want, OCR yes/no, use LLM yes/no)
+
+    artifact_dict = the brains (the models/knowledge about documents)
+    processor_list = cleanup helpers (optional extras to improve block extraction/formatting)
+    renderer = pretty printer (turns blocks into Markdown/JSON/HTML)
+    llm_service = smart assistant (an optional LLM to "fix" hard cases)
+
+    config = {
+    "output_format": "json",
+    }
+    config_parser = ConfigParser(config)
+    """
 
     converter = PdfConverter(
-        # config=config_parser.generate_config_dict(),
         artifact_dict=create_model_dict(),
-        # processor_list=config_parser.get_processors(),
-        # renderer=config_parser.get_renderer(),
-        # llm_service=config_parser.get_llm_service()
     )
 
     document = converter.build_document(
@@ -71,16 +100,18 @@ def pdf_to_json(path, output_path):
         output_format="json"
     )
 
+    # TODO: update metadata retrieval
     # metadata = SourceMetadata(
     #     source=path  # Just use the file path or any identifier
     # )
 
+    # TODO: pass in real metadata. relies on the above
     temp_dict = dict()
-    temp_dict.add("placeholder")
+    temp_dict = {"placeholder": True}
 
     data = {
-        document: document,
-        metadata: temp_dict
+        "document": document,
+        "metadata": temp_dict
     }
 
     # for debugging purposes
@@ -93,17 +124,22 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
     """
     This function takes our marker JSON, takes the sections, 
     and formulates metadata and extracts content. It saves it into the database with insert_content
+    It prepares for block traversal.
+    
     Args: JSON data from marker, database session, a dictionary which we plug into the knowledge_base_source
     Returns: success if we get through all of the subchunks
     """
     # 1. Insert knowledge_base_sources row (created empty one) AKA the metadata
     # remember that this is from @models.py courtesy of SQLAlchemy
+
+    # error: models is not defined
     source = models.KnowledgeBaseSource(
         name=source_metadata.get("title", "Untitled"),
         author=source_metadata.get("author", "Unknown"),
         language=source_metadata.get("language", "en"),
         license=source_metadata.get("license", "unknown"),
         source_type="textbook",
+        # TODO: figure out non-deprecated version
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
@@ -116,72 +152,81 @@ def sub_chunk(json_data, db: Session, source_metadata: dict):
     # reread the new row
     db.refresh(source)
 
-    section_stack = []  # stack of (section_id, level)
+    section_stack = []  # initialize stack of (section_id, level)
 
+    # Pass db and stack
+    traverse_blocks(json_data.get("children", []), parent_id=None, db=db, section_stack=section_stack)
+
+    return {"status": "success", "source_id": source.source_id}
+
+def insert_content(block, db=None, parent_id=None):
     """
-    What is a "block" in marker?
-    they are the "smallest structural units in the PDF"
-    e.g., a section header, a paragraph of text, a list, an image, a page footer
+    Inserts the HTML that we got from the marker JSON
+    into the corresponding database table
+
+    title:         
+
+    Args:
+    Returns:
     """
 
-    def insert_content(block, parent_id=None):
-        """
-        Inserts the HTML that we got from the marker JSON
-        into the corresponding database table
+    # GET THE TEXT
+    # TODO: update how we get this
+    # it should be extracting from json
+    content_text = html_to_text(block.get("html", ""))
+    block_type = block.get("block_type", "Unknown")
+    # embedding = generate_embedding(content_text)  # your embedding function
 
-        title:         
-
-        Args:
-        Returns:
-        """
-        content_text = html_to_text(block.get("html", ""))
-        block_type = block.get("block_type", "Unknown")
-        # embedding = generate_embedding(content_text)  # your embedding function
-
-        # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
-        # we don't want to embed the text itself as a title
-        
-        # also, source is from sub_chunk, our parent function
-        # so we're updating the knowledge_base_content row with SQLAlchemy ORM
-        content = models.KnowledgeBaseContent(
-            source_id=source.source_id, # we keep the key consistent
-            parent_content_id=parent_id, # parent is from params
-            title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
-            content=content_text, # content is as extracted
-            content_type=block_type, # keep track of type
-            # embedding=embedding, # TODO: add embedding
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        db.add(content)
-        db.commit()
-        db.refresh(content)
-        return content.content_id
+    # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
+    # we don't want to embed the text itself as a title
     
-    def traverse_blocks(blocks, parent_id=None):
-        for block in blocks:
-            block_type = block.get("block_type")
-            
-            # if page, then recurse through it as pages are containers not content
-            # if section header (like "Chapter 1: Limits"), then insert the block with parent id being the page
-            # if text OR ListItem, then we insert the block with parent id being the latest nest (if exists)
-            # if ListGroup, then recurse through the bullet points/numbered list containers with parent id being latest nest (if exists)
+    # also, source is from sub_chunk, our parent function
+    # so we're updating the knowledge_base_content row with SQLAlchemy ORM
 
-            # note: section stack keeps track of nested section headers. [-1][0] gets the top of the stack.
-            if block_type == "Page":
-                traverse_blocks(block.get("children", []), parent_id=parent_id)
-            elif block_type == "SectionHeader":
-                section_id = insert_content(block, parent_id=parent_id)
-                # update the stack for this new section level
-                section_stack.append((section_id, block.get("section_hierarchy", {})))
-                traverse_blocks(block.get("children", []), parent_id=section_id)
-            elif block_type in {"Text", "ListItem"}:
-                # its parent is the latest nested item if we even have one. else it's just the page.
-                insert_content(block, parent_id=section_stack[-1][0] if section_stack else parent_id)
-            elif block_type == "ListGroup":
-                traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id)
+    # error: models is not defined
+    content = models.KnowledgeBaseContent(
+        source_id=source.source_id, # we keep the key consistent
+        parent_content_id=parent_id, # parent is from params
+        title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
+        content=content_text, # content is as extracted
+        content_type=block_type, # keep track of type
+        # embedding=embedding, # TODO: add embedding
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(content)
+    db.commit()
+    db.refresh(content)
+    return content.content_id
+
+def traverse_blocks(blocks, parent_id=None, db=None, section_stack=None):
+    section_stack = section_stack or []
+
+    for block in blocks:
+        block_type = block.get("block_type")
+        
+        # if page, then recurse through it as pages are containers not content
+        # if section header (like "Chapter 1: Limits"), then insert the block with parent id being the page
+        # if text OR ListItem, then we insert the block with parent id being the latest nest (if exists)
+        # if ListGroup, then recurse through the bullet points/numbered list containers with parent id being latest nest (if exists)
+
+        # note: section stack keeps track of nested section headers. [-1][0] gets the top of the stack.
+        if block_type == "Page":
+            traverse_blocks(block.get("children", []), parent_id=parent_id, db=db, section_stack=section_stack)
+        elif block_type == "SectionHeader":
+            section_id = insert_content(block, db=db, parent_id=parent_id)
+            # update the stack for this new section level
+            section_stack.append((section_id, block.get("section_hierarchy", {})))
+            traverse_blocks(block.get("children", []), parent_id=section_id, db=db, section_stack=section_stack)
+        elif block_type in {"Text", "ListItem"}:
+            # its parent is the latest nested item if we even have one. else it's just the page.
+            insert_content(block, db=db, parent_id=section_stack[-1][0] if section_stack else parent_id)
+        elif block_type == "ListGroup":
+            traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id, db=db, section_stack=section_stack)
 
     # 2. Begin traversal
+
+    # error: json_data and source is not defined
     traverse_blocks(json_data.get("children", []))
     return {"status": "success", "source_id": source.source_id}
 

@@ -60,6 +60,127 @@ class DocumentProcessor:
         self.max_chunk_size = 1000  # maximum characters per chunk
         self.overlap = 50  # number of characters to overlap between chunks
 
+    async def save_upload_file(upload_file: UploadFile) -> str:
+        """
+        Save an uploaded file asynchronously with improved error handling and cleanup.
+        Args:
+            upload_file: FastAPI UploadFile object
+        Returns:
+            str: Path to the saved file
+        """
+        try:
+            # Create uploads directory if it doesn't exist
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            
+            # Generate unique filename with original extension
+            ext = Path(upload_file.filename).suffix or '.pdf'
+            filename = f"{uuid.uuid4()}{ext}"
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            
+            # Save file in chunks
+            async with aiofiles.open(file_path, 'wb') as out_file:
+                while chunk := await upload_file.read(CHUNK_SIZE):
+                    await out_file.write(chunk)
+                    
+            return file_path
+            
+        except Exception as e:
+            # Clean up partial file if save fails
+            if 'file_path' in locals() and os.path.exists(file_path):
+                os.remove(file_path)
+            raise RuntimeError(f"Failed to save upload file: {str(e)}")
+    
+    async def _split_pdf_into_chunks(
+        self, 
+        upload_file: UploadFile, 
+        source_id: int,
+        metadata: Dict
+        ) -> List[DocumentChunk]:
+        """
+        Split PDF into semantic chunks, extract text, and return document chunks.
+        This gets us our chunk #1 (from the entire pdf, we chunk into chunks of size X)
+        Note that this is different from taking a chunk and splitting into sections
+        Args:
+            upload_file: FastAPI UploadFile containing the PDF
+            source_id: Unique identifier for this document source
+            metadata: Additional metadata about the document
+        Returns:
+            List of DocumentChunk objects containing the processed content
+        """
+        # Save upload to temp file and get path
+        path = await save_upload_file(upload_file)
+        chunks = []
+
+        try:
+            # Open PDF handler
+            doc = fitz.open(path)
+            
+            # Process PDF in chunks of pages
+            chunk_size = 5
+
+            for chunk_start in range(0, len(doc), chunk_size):
+                # Get page range for this chunk
+                chunk_end = min(chunk_start + chunk_size, len(doc))
+                
+                # Extract text from pages in this chunk
+                chunk_text = ""
+                for page_num in range(chunk_start, chunk_end):
+                    page = doc[page_num]
+                    chunk_text += page.get_text()
+                
+                # Clean and normalize the extracted text
+                chunk_text = self._clean_text(chunk_text)
+                
+                # Create chunk object with metadata
+                chunk = DocumentChunk(
+                    content=chunk_text,
+                    page_number=chunk_start,
+                    chunk_number=len(chunks),
+                    metadata={
+                        "source_id": source_id,
+                        "page_range": f"{chunk_start}-{chunk_end-1}",
+                        **metadata
+                    }
+                )
+                chunks.append(chunk)
+                
+        finally:
+            # Clean up temp file
+            os.remove(path)
+            
+        return chunks
+    
+    def _clean_text(self, text: str) -> str:
+        return re.sub(r'\s+', ' ', text).strip()
+
+    # TODO: rename to be more descriptive   
+    # TODO: fix the fact that we expect a file upload object, but main.py passes a path (temp_path
+    async def process_file(
+        self, 
+        upload_file: UploadFile,
+        source_id: int,
+        metadata: Dict = None
+    ) -> List[DocumentChunk]:
+        """
+        Process an uploaded file and return chunks.
+        Currently supports PDF, can be extended for other formats.
+        Args:
+            upload_file: FastAPI UploadFile object
+            source_id: Unique identifier for the document
+            metadata: Optional metadata about the document
+        Returns:
+            List[DocumentChunk]: Processed document chunks
+        """
+        content_type = upload_file.content_type or ''
+        
+        if 'pdf' in content_type.lower():
+            # now we need to take this, and then run marker on it
+            return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
+        else:
+            raise ValueError(f"Unsupported file type: {content_type}")
+        
+    
+
 class DocumentProcessingContext:
     def __init__(self, db: Session, source: "models.KnowledgeBaseSource"):
         self.db = db
@@ -82,6 +203,9 @@ def flush_buffer(context):
         context.db.commit()
         context.content_buffer.clear()
 
+# TODO:
+# Fix: → Inside insert_content, do not call generate_embedding immediately.
+# → Instead, insert into DB with embedding=None, and batch them later via
 def generate_embedding(text: str) -> List[float]:
     """
     Generate an OpenAI embedding for the given text.
@@ -133,7 +257,6 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
         model="text-embedding-ada-002"
     )
     return [item["embedding"] for item in response["data"]]
-
 
 # -------------------
 
@@ -312,7 +435,7 @@ def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingCon
         if block_type == "Page":
             traverse_blocks(block.get("children", []), parent_id=parent_id, context=context)
         elif block_type == "SectionHeader":
-            section_id = insert_content(block, db=db, parent_id=parent_id)
+            section_id = insert_content(block, parent_id=parent_id, context=context)
             # update the stack for this new section level
             section_stack.append((section_id, block.get("section_hierarchy", {})))
             traverse_blocks(block.get("children", []), parent_id=section_id, context=context)
@@ -325,122 +448,3 @@ def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingCon
     # 2. Begin traversal
 
     return {"status": "success", "source_id": context.source.source_id}
-
-# -------------------
-
-# for the chunking
-
-async def save_upload_file(upload_file: UploadFile) -> str:
-    """
-    Save an uploaded file asynchronously with improved error handling and cleanup.
-    Args:
-        upload_file: FastAPI UploadFile object
-    Returns:
-        str: Path to the saved file
-    """
-    try:
-        # Create uploads directory if it doesn't exist
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
-        
-        # Generate unique filename with original extension
-        ext = Path(upload_file.filename).suffix or '.pdf'
-        filename = f"{uuid.uuid4()}{ext}"
-        file_path = os.path.join(UPLOAD_DIR, filename)
-        
-        # Save file in chunks
-        async with aiofiles.open(file_path, 'wb') as out_file:
-            while chunk := await upload_file.read(CHUNK_SIZE):
-                await out_file.write(chunk)
-                
-        return file_path
-        
-    except Exception as e:
-        # Clean up partial file if save fails
-        if 'file_path' in locals() and os.path.exists(file_path):
-            os.remove(file_path)
-        raise RuntimeError(f"Failed to save upload file: {str(e)}")
-
-async def _split_pdf_into_chunks(
-    self, 
-    upload_file: UploadFile, 
-    source_id: int,
-    metadata: Dict
-) -> List[DocumentChunk]:
-    """
-    Split PDF into semantic chunks, extract text, and return document chunks.
-    This gets us our chunk #1 (from the entire pdf, we chunk into chunks of size X)
-    Note that this is different from taking a chunk and splitting into sections
-    Args:
-        upload_file: FastAPI UploadFile containing the PDF
-        source_id: Unique identifier for this document source
-        metadata: Additional metadata about the document
-    Returns:
-        List of DocumentChunk objects containing the processed content
-    """
-    # Save upload to temp file and get path
-    path = await save_upload_file(upload_file)
-    chunks = []
-
-    try:
-        # Open PDF handler
-        doc = fitz.open(path)
-        
-        # Process PDF in chunks of pages
-        chunk_size = 5
-
-        for chunk_start in range(0, len(doc), chunk_size):
-            # Get page range for this chunk
-            chunk_end = min(chunk_start + chunk_size, len(doc))
-            
-            # Extract text from pages in this chunk
-            chunk_text = ""
-            for page_num in range(chunk_start, chunk_end):
-                page = doc[page_num]
-                chunk_text += page.get_text()
-            
-            # Clean and normalize the extracted text
-            chunk_text = self._clean_text(chunk_text)
-            
-            # Create chunk object with metadata
-            chunk = DocumentChunk(
-                content=chunk_text,
-                page_number=chunk_start,
-                chunk_number=len(chunks),
-                metadata={
-                    "source_id": source_id,
-                    "page_range": f"{chunk_start}-{chunk_end-1}",
-                    **metadata
-                }
-            )
-            chunks.append(chunk)
-            
-    finally:
-        # Clean up temp file
-        os.remove(path)
-        
-    return chunks
-
-# TODO: rename to be more descriptive   
-async def process_file(
-    self, 
-    upload_file: UploadFile,
-    source_id: int,
-    metadata: Dict = None
-) -> List[DocumentChunk]:
-    """
-    Process an uploaded file and return chunks.
-    Currently supports PDF, can be extended for other formats.
-    Args:
-        upload_file: FastAPI UploadFile object
-        source_id: Unique identifier for the document
-        metadata: Optional metadata about the document
-    Returns:
-        List[DocumentChunk]: Processed document chunks
-    """
-    content_type = upload_file.content_type or ''
-    
-    if 'pdf' in content_type.lower():
-        # now we need to take this, and then run marker on it
-        return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
-    else:
-        raise ValueError(f"Unsupported file type: {content_type}")

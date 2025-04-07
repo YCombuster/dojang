@@ -74,12 +74,68 @@ UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 
 # -------------------
+# helpers
 
 def flush_buffer(context):
     if context.content_buffer:
         context.db.bulk_save_objects(context.content_buffer)
         context.db.commit()
         context.content_buffer.clear()
+
+def generate_embedding(text: str) -> List[float]:
+    """
+    Generate an OpenAI embedding for the given text.
+    """
+    response = openai.Embedding.create(
+        input=text,
+        model="text-embedding-ada-002" 
+    )
+    return response["data"][0]["embedding"]
+
+async def batch_generate_embeddings_for_source(source_id: int, db: Session):
+    """
+    After uploading a document, batch generate embeddings for all its contents.
+    """
+    # 1. Fetch all contents without an embedding
+    contents = db.query(models.KnowledgeBaseContent).filter(
+        models.KnowledgeBaseContent.source_id == source_id,
+        models.KnowledgeBaseContent.embedding.is_(None)
+    ).all()
+
+    if not contents:
+        print(f"No content needing embeddings for source {source_id}")
+        return
+
+    # 2. Chunk contents into batches (e.g., 100 at a time)
+    batch_size = 100
+    for i in range(0, len(contents), batch_size):
+        batch = contents[i:i+batch_size]
+
+        texts = [c.content for c in batch]
+
+        # 3. Call OpenAI embedding API
+        response = await generate_embeddings_batch(texts)
+
+        # 4. Update each KnowledgeBaseContent with its embedding
+        for content, embedding in zip(batch, response):
+            content.embedding = embedding
+
+        # 5. Bulk save updates
+        db.bulk_save_objects(batch)
+        db.commit()
+
+async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Generate embeddings for a batch of texts.
+    """
+    response = await openai.Embedding.acreate(
+        input=texts,
+        model="text-embedding-ada-002"
+    )
+    return [item["embedding"] for item in response["data"]]
+
+
+# -------------------
 
 # for the sectioning of the chunking
 
@@ -136,7 +192,7 @@ def pdf_to_json(path, output_path):
 
     return data
 
-def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str, Any]) -> dict[str, Any]:
+async def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str, Any]) -> dict[str, Any]:
     """
     This function takes our marker JSON, takes the sections, 
     and formulates metadata and extracts content. It saves it into the database with insert_content
@@ -178,6 +234,14 @@ def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str,
         context.db.rollback()
         raise e
 
+    # TODO: (later optimization):
+    # Move batch_generate_embeddings_for_source() to a background task (FastAPI BackgroundTasks or Celery) 
+    # so that we can return immediately after upload and embed asynchronously.
+    # Right now we await it directly for simplicity and easier debugging.
+
+    # After upload, trigger embeddings all at once
+    await batch_generate_embeddings_for_source(source.source_id, db)
+
     return {"status": "success", "source_id": source.source_id}
 
 def insert_content(block, parent_id=None, context: DocumentProcessingContext = None):
@@ -194,12 +258,19 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
     if not context or not context.source:
         raise ValueError("Context with source is required")
 
-    # GET THE TEXT
-    # TODO: update how we get this
-    # it should be extracting from json
+    """
+    Instead of calling OpenAI inside insert_content() (slow + expensive),
+    we upload, store all content without embeddings (fast).
+
+    After the upload finishes, query all unembedded blocks from the DB.
+    Batch the content (e.g., groups of 100 paragraphs).
+    Send batches to OpenAI’s Embedding API.
+    Update the DB with the embeddings.
+    """
+    
     content_text = html_to_text(block.get("html", ""))
     block_type = block.get("block_type", "Unknown")
-    # embedding = generate_embedding(content_text)  # your embedding function
+    embedding = generate_embedding(content_text)
 
     # the reason why title is None for only text and not all others: blocks can be SectionHeader, ListGroup, ListItem, Page, so it makes sense to keep track of those
     # we don't want to embed the text itself as a title
@@ -214,7 +285,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
         title=None if block_type == "Text" else content_text[:100], # add a label if it's not pure text
         content=content_text, # content is as extracted
         content_type=block_type, # keep track of type
-        # embedding=embedding, # TODO: add embedding
+        embedding=embedding,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )

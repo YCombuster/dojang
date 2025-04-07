@@ -63,12 +63,9 @@ async def upload_document(
         # Initialize document processor
         processor = DocumentProcessor()
         
-        # Save uploaded file temporarily
-        temp_path = await processor.save_upload_file(file)
-        
         try:
             # Process the document
-            chunks = await processor.process_file(temp_path, 'pdf')
+            chunks = await processor.process_upload(file)
             
             if not chunks:
                 raise HTTPException(status_code=400, detail="Could not extract content from PDF")
@@ -122,10 +119,6 @@ async def upload_document(
                 "source_id": result.source_id,
                 "chunks_processed": len(chunks)
             }
-            
-        finally:
-            # Clean up temporary file
-            os.unlink(temp_path)
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

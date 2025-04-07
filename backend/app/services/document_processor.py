@@ -66,6 +66,7 @@ class DocumentProcessingContext:
         self.source = source
         self.section_stack = []
         self.metadata = {}  # optional extras
+        self.content_buffer = [] # used to hold all the blocks before committing to database
 
 # CONSTANTS
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
@@ -162,6 +163,7 @@ def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str,
     try:
         # Pass db and stack
         traverse_blocks(json_data.get("children", []), parent_id=None, context=context)
+        context.db.bulk_save_objects(context.content_buffer)
         context.db.commit()
     except Exception as e:
         context.db.rollback()
@@ -207,7 +209,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
-    context.db.add(content)
+    context.content_buffer.append(content)
     return content
 
 def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingContext = None):

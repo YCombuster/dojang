@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Install the app as a module for proper imports in tests
-RUN pip install --no-cache-dir -e . --no-deps
+RUN pip install --no-cache-dir -e .
+RUN pip freeze > /app/installed_packages.txt
 
 # Expose the port the app runs on
 EXPOSE 8000

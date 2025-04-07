@@ -44,6 +44,7 @@ def health_check():
 async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
+
 ):
     """
     Upload and process a document (currently supports PDF).

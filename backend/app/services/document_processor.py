@@ -67,12 +67,19 @@ class DocumentProcessingContext:
         self.section_stack = []
         self.metadata = {}  # optional extras
         self.content_buffer = [] # used to hold all the blocks before committing to database
+        self.buffer_limit = 500   # how big the batch is before saving
 
 # CONSTANTS
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for better performance
 
 # -------------------
+
+def flush_buffer(context):
+    if context.content_buffer:
+        context.db.bulk_save_objects(context.content_buffer)
+        context.db.commit()
+        context.content_buffer.clear()
 
 # for the sectioning of the chunking
 
@@ -163,8 +170,10 @@ def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str,
     try:
         # Pass db and stack
         traverse_blocks(json_data.get("children", []), parent_id=None, context=context)
-        context.db.bulk_save_objects(context.content_buffer)
-        context.db.commit()
+
+         # Final flush if anything remains in buffer
+        flush_buffer(context)
+
     except Exception as e:
         context.db.rollback()
         raise e
@@ -183,7 +192,7 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
     """
 
     if not context or not context.source:
-        raise ValueError("Source object is required")
+        raise ValueError("Context with source is required")
 
     # GET THE TEXT
     # TODO: update how we get this
@@ -210,6 +219,11 @@ def insert_content(block, parent_id=None, context: DocumentProcessingContext = N
         updated_at=datetime.utcnow()
     )
     context.content_buffer.append(content)
+
+    # If buffer is full, bulk save and reset
+    if len(context.content_buffer) >= context.buffer_limit:
+        flush_buffer(context)
+
     return content
 
 def traverse_blocks(blocks: list, parent_id=None, context: DocumentProcessingContext = None):

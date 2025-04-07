@@ -10,7 +10,7 @@ This is a very important file. It uploads our PDFs to the database, no matter ho
 
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from fastapi import UploadFile
 import re
 from pathlib import Path
@@ -120,7 +120,7 @@ def pdf_to_json(path, output_path):
 
     return data
 
-def sub_chunk(json_data, db: Session, source_metadata: dict):
+def sub_chunk(json_data: dict[str, Any], db: Session, source_metadata: dict[str, Any]):
     """
     This function takes our marker JSON, takes the sections, 
     and formulates metadata and extracts content. It saves it into the database with insert_content
@@ -170,6 +170,9 @@ def insert_content(block, db=None, parent_id=None):
     Returns:
     """
 
+    if not source:
+        raise ValueError("Source object is required")
+
     # GET THE TEXT
     # TODO: update how we get this
     # it should be extracting from json
@@ -199,7 +202,7 @@ def insert_content(block, db=None, parent_id=None):
     db.refresh(content)
     return content.content_id
 
-def traverse_blocks(blocks, parent_id=None, db=None, section_stack=None):
+def traverse_blocks(json_data: dict[str, Any], blocks, parent_id=None, db=None, section_stack=None):
     section_stack = section_stack or []
 
     for block in blocks:
@@ -212,22 +215,22 @@ def traverse_blocks(blocks, parent_id=None, db=None, section_stack=None):
 
         # note: section stack keeps track of nested section headers. [-1][0] gets the top of the stack.
         if block_type == "Page":
-            traverse_blocks(block.get("children", []), parent_id=parent_id, db=db, section_stack=section_stack)
+            traverse_blocks(json_data, block.get("children", []), parent_id=parent_id, db=db, section_stack=section_stack)
         elif block_type == "SectionHeader":
             section_id = insert_content(block, db=db, parent_id=parent_id)
             # update the stack for this new section level
             section_stack.append((section_id, block.get("section_hierarchy", {})))
-            traverse_blocks(block.get("children", []), parent_id=section_id, db=db, section_stack=section_stack)
+            traverse_blocks(json_data, block.get("children", []), parent_id=section_id, db=db, section_stack=section_stack)
         elif block_type in {"Text", "ListItem"}:
             # its parent is the latest nested item if we even have one. else it's just the page.
             insert_content(block, db=db, parent_id=section_stack[-1][0] if section_stack else parent_id)
         elif block_type == "ListGroup":
-            traverse_blocks(block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id, db=db, section_stack=section_stack)
+            traverse_blocks(json_data, block.get("children", []), parent_id=section_stack[-1][0] if section_stack else parent_id, db=db, section_stack=section_stack)
 
     # 2. Begin traversal
 
     # error: json_data and source is not defined
-    traverse_blocks(json_data.get("children", []))
+    traverse_blocks(json_data, json_data.get("children", []))
     return {"status": "success", "source_id": source.source_id}
 
 # -------------------

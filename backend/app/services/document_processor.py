@@ -60,7 +60,7 @@ class DocumentProcessor:
         self.max_chunk_size = 1000  # maximum characters per chunk
         self.overlap = 50  # number of characters to overlap between chunks
 
-    async def save_upload_file(upload_file: UploadFile) -> str:
+    async def save_upload_file(self, upload_file: UploadFile) -> str:
         """
         Save an uploaded file asynchronously with improved error handling and cleanup.
         Args:
@@ -90,25 +90,23 @@ class DocumentProcessor:
                 os.remove(file_path)
             raise RuntimeError(f"Failed to save upload file: {str(e)}")
     
+    # async def _split_pdf_into_chunks(self, path: str, metadata: Dict) -> List[DocumentChunk]:
     async def _split_pdf_into_chunks(
         self, 
-        upload_file: UploadFile, 
-        source_id: int,
-        metadata: Dict
+        path: str, 
+        metadata: dict[str, Any]
         ) -> List[DocumentChunk]:
         """
-        Split PDF into semantic chunks, extract text, and return document chunks.
+        Split PDF into semantic TEXT chunks, extract text, and return them as DocumentChunk objects.
+
         This gets us our chunk #1 (from the entire pdf, we chunk into chunks of size X)
-        Note that this is different from taking a chunk and splitting into sections
+        This is **different from** sectioning the content into semantic BLOCKS (which happens later).
         Args:
-            upload_file: FastAPI UploadFile containing the PDF
-            source_id: Unique identifier for this document source
+            path (str): Path to the saved PDF file.
             metadata: Additional metadata about the document
         Returns:
             List of DocumentChunk objects containing the processed content
-        """
-        # Save upload to temp file and get path
-        path = await save_upload_file(upload_file)
+        """ 
         chunks = []
 
         try:
@@ -157,27 +155,22 @@ class DocumentProcessor:
     # TODO: fix the fact that we expect a file upload object, but main.py passes a path (temp_path
     async def process_file(
         self, 
-        upload_file: UploadFile,
-        source_id: int,
-        metadata: Dict = None
-    ) -> List[DocumentChunk]:
+        path: str,
+        file_type: str) -> List[DocumentChunk]:
         """
         Process an uploaded file and return chunks.
         Currently supports PDF, can be extended for other formats.
         Args:
-            upload_file: FastAPI UploadFile object
-            source_id: Unique identifier for the document
-            metadata: Optional metadata about the document
+            upload_file: path as string
         Returns:
             List[DocumentChunk]: Processed document chunks
         """
-        content_type = upload_file.content_type or ''
         
-        if 'pdf' in content_type.lower():
+        if 'pdf' in file_type.lower():
             # now we need to take this, and then run marker on it
-            return await self._split_pdf_into_chunks(upload_file, source_id, metadata or {})
+            return await self._split_pdf_into_chunks(path, metadata={})
         else:
-            raise ValueError(f"Unsupported file type: {content_type}")
+            raise ValueError(f"Unsupported file type: {file_type}")
         
     
 

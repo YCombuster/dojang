@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from typing import List
 
+import openai
+from dotenv import load_dotenv
+
 from .database import get_db, engine, Base
 from . import models
 from .routers import sources
@@ -11,6 +14,11 @@ from .services.document_processor import DocumentProcessor
 from .services.source_intake import InformationSource
 
 app = FastAPI(title="Study AI API")
+
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
+print(f"API key loaded: {'Yes' if api_key else 'No'}")
+print(f"API key length: {len(api_key) if api_key else 0}")
 
 # Configure CORS
 app.add_middleware(
@@ -55,71 +63,70 @@ async def upload_document(
     3. Each chunk will be saved as a KnowledgeBaseContent
     4. The document metadata will be saved as a KnowledgeBaseSource
     """
+    # Validate file type
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are currently supported")
+    
+    # Initialize document processor
+    processor = DocumentProcessor()
+    
     try:
-        # Validate file type
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Only PDF files are currently supported")
+        # Process the document
+        chunks = await processor.save_and_process_uploaded_pdf(file)
         
-        # Initialize document processor
-        processor = DocumentProcessor()
+        if not chunks:
+            raise HTTPException(status_code=400, detail="Could not extract content from PDF")
         
-        try:
-            # Process the document
-            chunks = await processor.process_upload(file)
-            
-            if not chunks:
-                raise HTTPException(status_code=400, detail="Could not extract content from PDF")
-            
-            # Create a source from the first chunk's metadata
-            first_chunk = chunks[0]
-            metadata = first_chunk.metadata
-            
-            source = InformationSource(
-                name=metadata.get('title', file.filename),
-                source=metadata.get('creator', 'PDF Upload'),
-                source_description=metadata.get('subject', ''),
-                source_type='pdf_document',
-                author=metadata.get('author', ''),
-                publisher=metadata.get('producer', ''),
-                publication_date=None,  # Could parse creation_date if needed
-                license=None,
-                language='en',  # Could use langdetect here
-                url='',  # Local upload
-                content_text=first_chunk.content,
-                content_type='document'
+        # Create a source from the first chunk's metadata
+        first_chunk = chunks[0]
+        metadata = first_chunk.metadata
+        
+        source = InformationSource(
+            name=metadata.get('title', file.filename),
+            source=metadata.get('creator', 'PDF Upload'),
+            source_description=metadata.get('subject', ''),
+            source_type='pdf_document',
+            author=metadata.get('author', ''),
+            publisher=metadata.get('producer', ''),
+            publication_date=None,  # Could parse creation_date if needed
+            license=None,
+            language='en',  # Could use langdetect here
+            url='',  # Local upload
+            content_text=first_chunk.content,
+            content_type='document'
+        )
+        
+        # Create sections for remaining chunks
+        source.sections = [
+            InformationSource(
+                name=f"Page {chunk.page_number} - Chunk {chunk.chunk_number}",
+                source=source.source,
+                source_description=f"Extracted from page {chunk.page_number}",
+                source_type=source.source_type,
+                author=source.author,
+                publisher=source.publisher,
+                publication_date=source.publication_date,
+                license=source.license,
+                language=source.language,
+                url=source.url,
+                content_text=chunk.content,
+                content_type='section'
             )
-            
-            # Create sections for remaining chunks
-            source.sections = [
-                InformationSource(
-                    name=f"Page {chunk.page_number} - Chunk {chunk.chunk_number}",
-                    source=source.source,
-                    source_description=f"Extracted from page {chunk.page_number}",
-                    source_type=source.source_type,
-                    author=source.author,
-                    publisher=source.publisher,
-                    publication_date=source.publication_date,
-                    license=source.license,
-                    language=source.language,
-                    url=source.url,
-                    content_text=chunk.content,
-                    content_type='section'
-                )
-                for chunk in chunks[1:]
-            ]
-            
-            # Save to database using existing service
-            from .services.source_intake import SourceIntakeService
-            service = SourceIntakeService(db)
-            result = await service.process_source(source)
-            
-            return {
-                "status": "success",
-                "message": "Document processed successfully",
-                "source_id": result.source_id,
-                "chunks_processed": len(chunks)
-            }
-            
+            for chunk in chunks[1:]
+        ]
+        
+        # Save to database using existing service
+        from .services.source_intake import SourceIntakeService
+        service = SourceIntakeService(db)
+        result = await service.process_source(source)
+        
+        return {
+            "status": "success",
+            "message": "Document processed successfully",
+            "source_id": result.source_id,
+            "chunks_processed": len(chunks)
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

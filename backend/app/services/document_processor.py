@@ -28,6 +28,7 @@ import uuid
 import os
 import json
 from app import models  # Import models from app package
+from dotenv import load_dotenv
 
 # for the sectioning of the chunks
 from bs4 import BeautifulSoup
@@ -39,6 +40,12 @@ from sqlalchemy.orm import Session
 # - [ ] (Optional) Improve error handling around database commits (rollback on failure).
 # - [ ] (Optional) Remove dead/commented out code (old config_parser stuff in `pdf_to_json`).
 # - [ ] (Optional) Add type hints to all functions for better readability and IDE support.
+
+# Load environment variables
+load_dotenv()
+
+# Set the API key for OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class DocumentChunk:
     def __init__(
@@ -55,40 +62,41 @@ class DocumentChunk:
 
 class DocumentProcessor:
     def __init__(self):
-        # Configure chunking parameters
-        self.min_chunk_size = 200  # minimum characters per chunk
-        self.max_chunk_size = 1000  # maximum characters per chunk
-        self.overlap = 50  # number of characters to overlap between chunks
+        self.min_chunk_size = 200
+        self.max_chunk_size = 1000
+        self.overlap = 50
 
-    async def save_upload_file(self, upload_file: UploadFile) -> str:
+    async def save_uploaded_file_to_temp(self, upload_file: UploadFile) -> List[DocumentChunk]:
         """
-        Save an uploaded file asynchronously with improved error handling and cleanup.
-        Args:
-            upload_file: FastAPI UploadFile object
-        Returns:
-            str: Path to the saved file
+        Just save the UploadFile to a temp path and return the file path.
         """
         try:
-            # Create uploads directory if it doesn't exist
             os.makedirs(UPLOAD_DIR, exist_ok=True)
-            
-            # Generate unique filename with original extension
             ext = Path(upload_file.filename).suffix or '.pdf'
             filename = f"{uuid.uuid4()}{ext}"
             file_path = os.path.join(UPLOAD_DIR, filename)
-            
-            # Save file in chunks
+
             async with aiofiles.open(file_path, 'wb') as out_file:
-                while chunk := await upload_file.read(CHUNK_SIZE):
-                    await out_file.write(chunk)
-                    
+                file_content = await upload_file.read() 
+                await out_file.write(file_content)
+
+            print(f"✅ Saved uploaded file at: {file_path}")
+
             return file_path
-            
+
         except Exception as e:
-            # Clean up partial file if save fails
             if 'file_path' in locals() and os.path.exists(file_path):
                 os.remove(file_path)
             raise RuntimeError(f"Failed to save upload file: {str(e)}")
+
+
+    async def save_and_process_uploaded_pdf(self, upload_file: UploadFile) -> str:
+        """
+        Save an uploaded file, process it into document chunks, and clean up the temp file.
+        """
+        temp_path = await self.save_uploaded_file_to_temp(upload_file)
+        chunks = await self.process_file(temp_path, file_type="pdf")
+        return chunks
     
     # async def _split_pdf_into_chunks(self, path: str, metadata: Dict) -> List[DocumentChunk]:
     async def _split_pdf_into_chunks(
@@ -135,7 +143,6 @@ class DocumentProcessor:
                     page_number=chunk_start,
                     chunk_number=len(chunks),
                     metadata={
-                        "source_id": source_id,
                         "page_range": f"{chunk_start}-{chunk_end-1}",
                         **metadata
                     }
@@ -203,6 +210,9 @@ def generate_embedding(text: str) -> List[float]:
     """
     Generate an OpenAI embedding for the given text.
     """
+
+    print("'generate_embedding' function was successfully called.")
+
     response = openai.Embedding.create(
         input=text,
         model="text-embedding-ada-002" 
@@ -213,6 +223,9 @@ async def batch_generate_embeddings_for_source(source_id: int, db: Session):
     """
     After uploading a document, batch generate embeddings for all its contents.
     """
+
+    print("'batch_generate_embeddings_for_source' function was successfully called.")
+
     # 1. Fetch all contents without an embedding
     contents = db.query(models.KnowledgeBaseContent).filter(
         models.KnowledgeBaseContent.source_id == source_id,
@@ -245,6 +258,8 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
     Generate embeddings for a batch of texts.
     """
+    print("'generate_embeddings' function was successfully called.")
+
     response = await openai.Embedding.acreate(
         input=texts,
         model="text-embedding-ada-002"

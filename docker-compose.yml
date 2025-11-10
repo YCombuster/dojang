@@ -28,6 +28,7 @@ services:
             - ./backend:/app
         environment:
             - DATABASE_URL=postgresql+asyncpg://postgres:zany12@db:5432/studyai
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
         depends_on:
             db:
                 condition: service_healthy
